@@ -73,6 +73,7 @@ func (n* notifier) Start() {
 
 		return
 	}
+	defer res.Body.Close()
 
 	if n.Debug {
 		bs, _ := ioutil.ReadAll(res.Body)
@@ -104,6 +105,7 @@ func (n* notifier) doPut(path string) {
 		fmt.Println(err)
 		return
 	}
+	defer res.Body.Close()
 
 	bs, _ := ioutil.ReadAll(res.Body)
 	_ = bs
