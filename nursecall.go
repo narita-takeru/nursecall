@@ -88,7 +88,7 @@ func printOutput(reader io.Reader) {
 			break
 		}
 
-		fmt.Println(string(buf[0:n]))
+		fmt.Println(string(buf[:n]))
 	}
 
 	if err != io.EOF {
