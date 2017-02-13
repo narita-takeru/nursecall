@@ -1,133 +1,159 @@
 package nursecall
 
 import (
-	"fmt"
-	"encoding/json"
-	"time"
-	"os"
-	"strings"
-	"net/http"
-	"math/rand"
-	"log"
-	"io/ioutil"
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"io/ioutil"
+	"log"
+	"math/rand"
+	"net/http"
+	"os"
+	"strings"
+	"time"
 )
 
-type apiParam struct {
+type APIParam struct {
 	CallToken string `json:"call_token"`
-	ProcessID int64 `json:"process_id"`
-	Name string `json:"name"`
+	ProcessID int64  `json:"process_id"`
+	Name      string `json:"name"`
 }
 
-type notifier struct {
-	URL string
-	CallToken string
-	Debug bool
-
-	started bool
-	interval int
-	isDone bool
-	httpClient *http.Client
-
-	apiParam apiParam
+func (a *APIParam) genName(tokens []string) {
+	a.Name = strings.Join(tokens, "\t")
 }
 
-func buildName() string {
-	tokens := os.Args[1:]
-	return strings.Join(tokens, "\t")
-}
-
-func buildProcessID() int64 {
+func (a *APIParam) genProcessID() {
 	rand.Seed(time.Now().UnixNano())
 	r := rand.Int63() / 100000 * 100000
-	return r + int64(os.Getpid())
+	a.ProcessID = r + int64(os.Getpid())
 }
 
-func (n* notifier) Start() {
+func newAPIParam(tokens []string) APIParam {
+	a := APIParam{CallToken: os.Getenv("NURSECALL_CALL_TOKEN")}
+	a.genName(tokens)
+	a.genProcessID()
+	return a
+}
 
-	if len(n.CallToken) <= 0 {
-		return
+type Notifier struct {
+	Debug bool
+
+	intervalHeartBeat int
+
+	HTTPClient  *http.Client
+	EndpointURL string
+	APIParam    APIParam
+}
+
+const (
+	defaultEndpointURL = "https://nursecall.io/api/v1/progresses"
+)
+
+func NewNotifier(tokens []string) Notifier {
+	n := Notifier{
+		Debug: "TRUE" == os.Getenv("NURSECALL_DEBUG"),
+
+		intervalHeartBeat: 60,
+
+		HTTPClient:  &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
+		EndpointURL: os.Getenv("NURSECALL_ENDPOINT"),
+		APIParam:    newAPIParam(tokens),
 	}
 
-	n.interval = 60
+	if len(n.EndpointURL) == 0 {
+		n.EndpointURL = defaultEndpointURL
+	}
+	return n
+}
 
-	n.apiParam.CallToken = n.CallToken
-	n.apiParam.ProcessID = buildProcessID()
-	n.apiParam.Name = buildName()
+func (n *Notifier) Validate() error {
+	if len(n.APIParam.CallToken) == 0 {
+		return errors.New("No CallToken")
+	}
+	return nil
+}
 
-	input, err := json.Marshal(n.apiParam)
+func (n *Notifier) Start() error {
+	input, err := json.Marshal(n.APIParam)
 	if err != nil {
-		log.Println("Can't build params.")
-		return
+		return err
 	}
 
-	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
-	n.httpClient = &http.Client{Transport: tr}
-
-	res, err := n.httpClient.Post(n.URL, "application/json", bytes.NewBuffer(input))
+	res, err := n.HTTPClient.Post(n.EndpointURL, "application/json", bytes.NewBuffer(input))
 	if err != nil {
-		if n.Debug {
-			log.Println(err)
-		}
-
-		return
+		return err
 	}
 	defer res.Body.Close()
 
 	if n.Debug {
-		bs, _ := ioutil.ReadAll(res.Body)
+		bs, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
 		log.Println(string(bs))
 	}
 
-	n.started = true
-	go n.heartbeat(n.interval)
+	// TODO catch error for safety use nursecall
+	go n.heartbeat()
+
+	return nil
 }
 
-func (n* notifier) doPut(path string) {
+func (n *Notifier) doPut(path string) error {
 
-	input, err := json.Marshal(n.apiParam)
+	input, err := json.Marshal(n.APIParam)
 	if err != nil {
-		log.Println("Can't build params.")
-		return
+		return err
 	}
 
-	req, _ := http.NewRequest(
+	req, err := http.NewRequest(
 		http.MethodPut,
-		n.URL + path,
+		n.EndpointURL+path,
 		strings.NewReader(string(input)),
 	)
-
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := n.httpClient.Do(req)
+	res, err := n.HTTPClient.Do(req)
 	if err != nil {
-		fmt.Println(err)
-		return
+		return err
 	}
 	defer res.Body.Close()
 
-	bs, _ := ioutil.ReadAll(res.Body)
-	_ = bs
+	if n.Debug {
+		bs, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		log.Println(string(bs))
+	}
+
+	return nil
 }
 
-func (n* notifier) heartbeat(interval int) {
-	for !n.isDone {
-		time.Sleep(time.Second * time.Duration(interval))
-		if !n.isDone {
-			n.doPut("")
+func (n *Notifier) heartbeat() {
+	for {
+		time.Sleep(time.Second * time.Duration(n.intervalHeartBeat))
+		if err := n.doPut(""); err != nil {
+			log.Println(err)
 		}
 	}
 }
 
-func (n* notifier) Done(exitStatus int) {
-	if n.started {
-		n.doPut("/done")
+func (n *Notifier) Done() error {
+	if err := n.doPut("/done"); err != nil {
+		return err
 	}
+	return nil
 }
 
-func (n* notifier) Error(e string) {
-	if n.started {
-		n.doPut("/error")
+func (n *Notifier) Error() error {
+	if err := n.doPut("/error"); err != nil {
+		return err
 	}
+	return nil
 }
