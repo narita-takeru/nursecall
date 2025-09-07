@@ -4,38 +4,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
-	"io/ioutil"
+	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 )
-
-type APIParam struct {
-	CallToken string `json:"call_token"`
-	ProcessID int64  `json:"process_id"`
-	Name      string `json:"name"`
-}
-
-func (a *APIParam) genName(tokens []string) {
-	a.Name = strings.Join(tokens, "\t")
-}
-
-func (a *APIParam) genProcessID() {
-	rand.Seed(time.Now().UnixNano())
-	r := rand.Int63() / 100000 * 100000
-	a.ProcessID = r + int64(os.Getpid())
-}
-
-func newAPIParam(tokens []string) APIParam {
-	a := APIParam{CallToken: os.Getenv("NURSECALL_CALL_TOKEN")}
-	a.genName(tokens)
-	a.genProcessID()
-	return a
-}
 
 type Notifier struct {
 	Debug bool
@@ -44,74 +19,78 @@ type Notifier struct {
 
 	HTTPClient  *http.Client
 	EndpointURL string
-	APIParam    APIParam
+
+	jobID string
 }
 
 const (
-	defaultEndpointURL = "https://nursecall.io/api/v1/progresses"
+	defaultEndpointURL = "https://api.nursecall.run/jobs"
 )
 
 func NewNotifier(tokens []string) Notifier {
 	n := Notifier{
-		Debug: "TRUE" == os.Getenv("NURSECALL_DEBUG"),
-
-		intervalHeartBeat: 60,
-
-		HTTPClient:  &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
-		EndpointURL: os.Getenv("NURSECALL_ENDPOINT"),
-		APIParam:    newAPIParam(tokens),
+		Debug:             "TRUE" == os.Getenv("NURSECALL_DEBUG"),
+		intervalHeartBeat: 0,
+		HTTPClient:        &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
+		EndpointURL:       defaultEndpointURL,
 	}
 
-	if len(n.EndpointURL) == 0 {
-		n.EndpointURL = defaultEndpointURL
-	}
 	return n
 }
 
-func (n *Notifier) Validate() error {
-	if len(n.APIParam.CallToken) == 0 {
-		return errors.New("No CallToken")
+func (n *Notifier) Start(cmdStr string) error {
+	input := map[string]interface{}{
+		"call_token": os.Getenv("NURSECALL_CALL_TOKEN"),
+		"path":       cmdStr,
 	}
-	return nil
-}
 
-func (n *Notifier) Start() error {
-	input, err := json.Marshal(n.APIParam)
+	inputBytes, err := json.Marshal(input)
 	if err != nil {
 		return err
 	}
 
-	res, err := n.HTTPClient.Post(n.EndpointURL, "application/json", bytes.NewBuffer(input))
+	res, err := n.HTTPClient.Post(n.EndpointURL, "application/json", bytes.NewBuffer(inputBytes))
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
 
-	if n.Debug {
-		bs, err := ioutil.ReadAll(res.Body)
-		if err != nil {
-			return err
-		}
-		log.Println(string(bs))
+	bs, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
 	}
 
+	var data createdResponse
+
+	if err := json.Unmarshal(bs, &data); err != nil {
+		log.Fatal(err)
+	}
+
+	n.jobID = data.ID
+
 	// TODO catch error for safety use nursecall
-	go n.heartbeat()
+	if 0 < n.intervalHeartBeat {
+		go n.heartbeat()
+	}
 
 	return nil
 }
 
-func (n *Notifier) doPut(path string) error {
+type createdResponse struct {
+	ID string `json:"id"`
+}
 
-	input, err := json.Marshal(n.APIParam)
+func (n *Notifier) update(params map[string]interface{}) error {
+	params["id"] = n.jobID
+	inputBytes, err := json.Marshal(params)
 	if err != nil {
 		return err
 	}
 
 	req, err := http.NewRequest(
 		http.MethodPut,
-		n.EndpointURL+path,
-		strings.NewReader(string(input)),
+		n.EndpointURL+"/update_job",
+		strings.NewReader(string(inputBytes)),
 	)
 	if err != nil {
 		return err
@@ -124,35 +103,46 @@ func (n *Notifier) doPut(path string) error {
 	}
 	defer res.Body.Close()
 
-	if n.Debug {
-		bs, err := ioutil.ReadAll(res.Body)
-		if err != nil {
-			return err
-		}
-		log.Println(string(bs))
+	bs, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
 	}
+
+	log.Println(string(bs))
 
 	return nil
 }
 
 func (n *Notifier) heartbeat() {
+	params := map[string]interface{}{}
+
 	for {
 		time.Sleep(time.Second * time.Duration(n.intervalHeartBeat))
-		if err := n.doPut(""); err != nil {
+		if err := n.update(params); err != nil {
 			log.Println(err)
 		}
 	}
 }
 
-func (n *Notifier) Done() error {
-	if err := n.doPut("/done"); err != nil {
+func (n *Notifier) Done(exitStatus int) error {
+	params := map[string]interface{}{
+		"execute_status": "success",
+		"exit_status":    exitStatus,
+	}
+
+	if err := n.update(params); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (n *Notifier) Error() error {
-	if err := n.doPut("/error"); err != nil {
+func (n *Notifier) Error(exitStatus int) error {
+	params := map[string]interface{}{
+		"execute_status": "failed",
+		"exit_status":    exitStatus,
+	}
+
+	if err := n.update(params); err != nil {
 		return err
 	}
 	return nil

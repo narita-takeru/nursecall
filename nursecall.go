@@ -1,8 +1,7 @@
 package nursecall
 
 import (
-	"fmt"
-	"io"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -12,48 +11,34 @@ const (
 )
 
 func Start(cmdStr string, args []string, n Notifier) error {
-	if err := n.Validate(); err != nil {
+	if err := n.Start(cmdStr); err != nil {
 		return err
 	}
 
 	cmd := exec.Command(cmdStr, args...)
 
-	if err := n.Start(); err != nil {
-		return err
-	}
-
 	exitStatus, err := do(cmd)
 	if err != nil {
-		return n.Error()
+		return n.Error(exitStatus)
 	}
 
 	if exitStatus == statusOK {
-		return n.Done()
+		return n.Done(exitStatus)
 	}
 
 	// Exceptional status
-	return n.Error()
+	return n.Error(exitStatus)
 }
 
 func do(cmd *exec.Cmd) (int, error) {
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
+
+	var err error
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err = cmd.Start(); err != nil {
 		return -1, err
 	}
-	defer stdoutPipe.Close()
-
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return -1, err
-	}
-	defer stderrPipe.Close()
-
-	if err := cmd.Start(); err != nil {
-		return -1, err
-	}
-
-	go printOutput(stdoutPipe)
-	go printOutput(stderrPipe)
 
 	exitStatus := statusOK
 	if err := cmd.Wait(); err != nil {
@@ -64,18 +49,4 @@ func do(cmd *exec.Cmd) (int, error) {
 		}
 	}
 	return exitStatus, err
-}
-
-func printOutput(reader io.Reader) {
-	var (
-		n   int
-		err error
-	)
-	buf := make([]byte, 1024)
-	for {
-		if n, err = reader.Read(buf); err != nil {
-			break
-		}
-		fmt.Println(string(buf[:n]))
-	}
 }
