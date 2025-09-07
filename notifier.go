@@ -21,9 +21,8 @@ type Notifier struct {
 	HTTPClient  *http.Client
 	EndpointURL string
 
-	jobID     string
-	taskName  string
-	heartBeat int
+	jobID    string
+	taskName string
 }
 
 const (
@@ -50,7 +49,6 @@ func NewNotifier(tokens []string) Notifier {
 		HTTPClient:        &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
 		EndpointURL:       defaultEndpointURL,
 		taskName:          "",
-		heartBeat:         0,
 	}
 
 	return n
