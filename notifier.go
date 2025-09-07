@@ -98,7 +98,7 @@ type createdResponse struct {
 	ID string `json:"id"`
 }
 
-func (n *Notifier) update(params map[string]interface{}) error {
+func (n *Notifier) update(path string, params map[string]interface{}) error {
 	params["id"] = n.jobID
 	inputBytes, err := json.Marshal(params)
 	if err != nil {
@@ -107,7 +107,7 @@ func (n *Notifier) update(params map[string]interface{}) error {
 
 	req, err := http.NewRequest(
 		http.MethodPut,
-		n.EndpointURL+"/update_job",
+		n.EndpointURL+path,
 		strings.NewReader(string(inputBytes)),
 	)
 	if err != nil {
@@ -137,11 +137,9 @@ func (n *Notifier) update(params map[string]interface{}) error {
 func (n *Notifier) heartbeat() {
 	for {
 		time.Sleep(time.Second * time.Duration(n.intervalHeartBeat))
-		params := map[string]interface{}{
-			"heartbeat": n.heartBeat,
-		}
+		params := map[string]interface{}{}
 
-		if err := n.update(params); err != nil {
+		if err := n.update("/update_heartbeat", params); err != nil {
 			log.Println(err)
 		}
 	}
@@ -153,7 +151,7 @@ func (n *Notifier) Done(exitCode int) error {
 		"exit_code":      exitCode,
 	}
 
-	if err := n.update(params); err != nil {
+	if err := n.update("/update_job", params); err != nil {
 		return err
 	}
 	return nil
@@ -165,7 +163,7 @@ func (n *Notifier) Error(exitCode int) error {
 		"exit_code":      exitCode,
 	}
 
-	if err := n.update(params); err != nil {
+	if err := n.update("/update_job", params); err != nil {
 		return err
 	}
 	return nil
