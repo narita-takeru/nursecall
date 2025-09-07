@@ -1,11 +1,11 @@
 # nursecall
-Agent of https://nursecall.io web service.
+Agent of https://nursecall.run web service.
 
-nursecall is command wrapper and agent for web service of nursecall.io.
+nursecall is command wrapper and agent for web service of nursecall.run.
 
-## about nursecall.io
+## about nursecall.run
 
-[https://nursecall.io](https://nursecall.io)
+[https://nursecall.run](https://nursecall.run)
 
 ![architecture](https://github.com/narita-takeru/nursecall/blob/master/nursecall-architecture.png)
 
