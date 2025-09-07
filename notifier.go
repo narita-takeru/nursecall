@@ -124,10 +124,10 @@ func (n *Notifier) heartbeat() {
 	}
 }
 
-func (n *Notifier) Done(exitStatus int) error {
+func (n *Notifier) Done(exitCode int) error {
 	params := map[string]interface{}{
 		"execute_status": "success",
-		"exit_status":    exitStatus,
+		"exit_code":      exitCode,
 	}
 
 	if err := n.update(params); err != nil {
@@ -136,10 +136,10 @@ func (n *Notifier) Done(exitStatus int) error {
 	return nil
 }
 
-func (n *Notifier) Error(exitStatus int) error {
+func (n *Notifier) Error(exitCode int) error {
 	params := map[string]interface{}{
 		"execute_status": "failed",
-		"exit_status":    exitStatus,
+		"exit_code":      exitCode,
 	}
 
 	if err := n.update(params); err != nil {
