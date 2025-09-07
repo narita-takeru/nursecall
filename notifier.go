@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,19 +21,36 @@ type Notifier struct {
 	HTTPClient  *http.Client
 	EndpointURL string
 
-	jobID string
+	jobID     string
+	taskName  string
+	heartBeat int
 }
 
 const (
 	defaultEndpointURL = "https://api.nursecall.run/jobs"
 )
 
+func getHeartBeatInterval() int {
+	interval := os.Getenv("NURSECALL_HEARTBEAT_INTERVAL_SEC")
+	if interval == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(interval)
+	if err != nil {
+		return 0
+	}
+
+	return value
+}
+
 func NewNotifier(tokens []string) Notifier {
 	n := Notifier{
-		Debug:             "TRUE" == os.Getenv("NURSECALL_DEBUG"),
-		intervalHeartBeat: 0,
+		Debug:             os.Getenv("NURSECALL_DEBUG") == "TRUE",
+		intervalHeartBeat: getHeartBeatInterval(),
 		HTTPClient:        &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
 		EndpointURL:       defaultEndpointURL,
+		taskName:          "",
+		heartBeat:         0,
 	}
 
 	return n
@@ -95,6 +113,7 @@ func (n *Notifier) update(params map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
+
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := n.HTTPClient.Do(req)
@@ -103,21 +122,25 @@ func (n *Notifier) update(params map[string]interface{}) error {
 	}
 	defer res.Body.Close()
 
-	bs, err := io.ReadAll(res.Body)
-	if err != nil {
-		return err
-	}
+	if n.Debug {
+		bs, err := io.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
 
-	log.Println(string(bs))
+		log.Println(string(bs))
+	}
 
 	return nil
 }
 
 func (n *Notifier) heartbeat() {
-	params := map[string]interface{}{}
-
 	for {
 		time.Sleep(time.Second * time.Duration(n.intervalHeartBeat))
+		params := map[string]interface{}{
+			"heartbeat": n.heartBeat,
+		}
+
 		if err := n.update(params); err != nil {
 			log.Println(err)
 		}
