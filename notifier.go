@@ -48,7 +48,7 @@ func NewNotifier(tokens []string) Notifier {
 		intervalHeartBeat: getHeartBeatInterval(),
 		HTTPClient:        &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
 		EndpointURL:       defaultEndpointURL,
-		taskName:          "",
+		taskName:          os.Getenv("NURSECALL_TASK_NAME"),
 	}
 
 	return n
@@ -58,6 +58,7 @@ func (n *Notifier) Start(cmdStr string) error {
 	input := map[string]interface{}{
 		"call_token": os.Getenv("NURSECALL_CALL_TOKEN"),
 		"path":       cmdStr,
+		"task_name":  n.taskName,
 	}
 
 	inputBytes, err := json.Marshal(input)
