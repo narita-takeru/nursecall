@@ -70,11 +70,16 @@ func (n *Notifier) Start(cmdStr string) error {
 	if err != nil {
 		return err
 	}
+
 	defer res.Body.Close()
 
 	bs, err := io.ReadAll(res.Body)
 	if err != nil {
 		return err
+	}
+
+	if n.Debug {
+		log.Println(string(bs))
 	}
 
 	var data createdResponse
