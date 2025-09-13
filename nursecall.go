@@ -1,6 +1,9 @@
 package nursecall
 
 import (
+	"bufio"
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -8,7 +11,57 @@ import (
 
 const (
 	statusOK = 0
+	maxLines = 10
+	maxChars = 300
 )
+
+type Capture struct {
+	lines []string
+}
+
+func (c *Capture) Write(p []byte) (int, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(p))
+	for scanner.Scan() {
+		line := scanner.Text()
+		c.lines = append(c.lines, line)
+	}
+	return len(p), nil
+}
+
+func (c *Capture) Summary() string {
+	if len(c.lines) == 0 {
+		return ""
+	}
+
+	headCount := maxLines
+	if len(c.lines) < headCount {
+		headCount = len(c.lines)
+	}
+	tailCount := maxLines
+	if len(c.lines)-headCount < tailCount {
+		tailCount = len(c.lines) - headCount
+	}
+
+	var buf bytes.Buffer
+	// head
+	for _, l := range c.lines[:headCount] {
+		buf.WriteString(l + "\n")
+	}
+	// tail
+	if tailCount > 0 {
+		buf.WriteString("...\n")
+		for _, l := range c.lines[len(c.lines)-tailCount:] {
+			buf.WriteString(l + "\n")
+		}
+	}
+
+	// 文字数制限
+	s := buf.String()
+	if len(s) > maxChars {
+		return s[:maxChars] + "..."
+	}
+	return s
+}
 
 func Start(cmdStr string, args []string, n Notifier) error {
 	if err := n.Start(cmdStr); err != nil {
@@ -17,26 +70,28 @@ func Start(cmdStr string, args []string, n Notifier) error {
 
 	cmd := exec.Command(cmdStr, args...)
 
+	stdoutCap := &Capture{}
+	stderrCap := &Capture{}
+
+	cmd.Stdout = io.MultiWriter(os.Stdout, stdoutCap)
+	cmd.Stderr = io.MultiWriter(os.Stderr, stderrCap)
+
 	exitStatus, err := do(cmd)
 	if err != nil {
 		return n.Error(exitStatus)
 	}
 
+	n.setStdout(stdoutCap.Summary())
+	n.setStderr(stderrCap.Summary())
+
 	if exitStatus == statusOK {
 		return n.Done(exitStatus)
 	}
-
-	// Exceptional status
 	return n.Error(exitStatus)
 }
 
 func do(cmd *exec.Cmd) (int, error) {
-
-	var err error
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err = cmd.Start(); err != nil {
+	if err := cmd.Start(); err != nil {
 		return -1, err
 	}
 
@@ -47,6 +102,7 @@ func do(cmd *exec.Cmd) (int, error) {
 				exitStatus = s.ExitStatus()
 			}
 		}
+		return exitStatus, err
 	}
-	return exitStatus, err
+	return exitStatus, nil
 }

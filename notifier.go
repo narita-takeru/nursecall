@@ -14,19 +14,22 @@ import (
 )
 
 type Notifier struct {
-	Debug bool
+	debug bool
 
 	intervalHeartBeat int
 
-	HTTPClient  *http.Client
-	EndpointURL string
+	httpClient  *http.Client
+	endpointURL string
 
 	jobID    string
 	taskName string
+
+	stdOut string
+	stdErr string
 }
 
 const (
-	defaultEndpointURL = "https://api.nursecall.run/jobs"
+	defaultEndpointURL = "http://localhost:13000/jobs"
 )
 
 func getHeartBeatInterval() int {
@@ -42,12 +45,12 @@ func getHeartBeatInterval() int {
 	return value
 }
 
-func NewNotifier(tokens []string) Notifier {
+func NewNotifier() Notifier {
 	n := Notifier{
-		Debug:             os.Getenv("NURSECALL_DEBUG") == "TRUE",
+		debug:             os.Getenv("NURSECALL_DEBUG") == "TRUE",
 		intervalHeartBeat: getHeartBeatInterval(),
-		HTTPClient:        &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
-		EndpointURL:       defaultEndpointURL,
+		httpClient:        &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
+		endpointURL:       defaultEndpointURL,
 		taskName:          os.Getenv("NURSECALL_TASK_NAME"),
 	}
 
@@ -66,7 +69,7 @@ func (n *Notifier) Start(cmdStr string) error {
 		return err
 	}
 
-	res, err := n.HTTPClient.Post(n.EndpointURL, "application/json", bytes.NewBuffer(inputBytes))
+	res, err := n.httpClient.Post(n.endpointURL, "application/json", bytes.NewBuffer(inputBytes))
 	if err != nil {
 		return err
 	}
@@ -78,17 +81,22 @@ func (n *Notifier) Start(cmdStr string) error {
 		return err
 	}
 
-	if n.Debug {
+	if n.debug {
 		log.Println(string(bs))
 	}
 
 	var data createdResponse
 
 	if err := json.Unmarshal(bs, &data); err != nil {
-		log.Fatal(err)
-	}
+		if n.debug {
+			log.Println(err)
+		}
 
-	n.jobID = data.ID
+		// nursecall apiと連携が取れなかったら、普通に実行する
+		return nil
+	} else {
+		n.jobID = data.ID
+	}
 
 	// TODO catch error for safety use nursecall
 	if 0 < n.intervalHeartBeat {
@@ -111,7 +119,7 @@ func (n *Notifier) update(path string, params map[string]interface{}) error {
 
 	req, err := http.NewRequest(
 		http.MethodPut,
-		n.EndpointURL+path,
+		n.endpointURL+path,
 		strings.NewReader(string(inputBytes)),
 	)
 	if err != nil {
@@ -120,13 +128,13 @@ func (n *Notifier) update(path string, params map[string]interface{}) error {
 
 	req.Header.Set("Content-Type", "application/json")
 
-	res, err := n.HTTPClient.Do(req)
+	res, err := n.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
 
-	if n.Debug {
+	if n.debug {
 		bs, err := io.ReadAll(res.Body)
 		if err != nil {
 			return err
@@ -136,6 +144,14 @@ func (n *Notifier) update(path string, params map[string]interface{}) error {
 	}
 
 	return nil
+}
+
+func (n *Notifier) setStdout(stdout string) {
+	n.stdOut = stdout
+}
+
+func (n *Notifier) setStderr(stderr string) {
+	n.stdErr = stderr
 }
 
 func (n *Notifier) heartbeat() {
@@ -150,9 +166,15 @@ func (n *Notifier) heartbeat() {
 }
 
 func (n *Notifier) Done(exitCode int) error {
+	if n.jobID == "" {
+		return nil
+	}
+
 	params := map[string]interface{}{
 		"execute_status": "success",
 		"exit_code":      exitCode,
+		"stdout":         n.stdOut,
+		"stderr":         n.stdErr,
 	}
 
 	if err := n.update("/update_job", params); err != nil {
@@ -162,9 +184,15 @@ func (n *Notifier) Done(exitCode int) error {
 }
 
 func (n *Notifier) Error(exitCode int) error {
+	if n.jobID == "" {
+		return nil
+	}
+
 	params := map[string]interface{}{
 		"execute_status": "failed",
 		"exit_code":      exitCode,
+		"stdout":         n.stdOut,
+		"stderr":         n.stdErr,
 	}
 
 	if err := n.update("/update_job", params); err != nil {

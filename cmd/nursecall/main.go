@@ -8,14 +8,14 @@ import (
 )
 
 func main() {
-	if len(os.Args) == 0 {
-		log.Println("No args")
+	if len(os.Args) == 1 {
+		log.Println("Error: no command provided. Usage: nursecall <command> [args...]")
 		return
 	}
+
 	cmdStr := os.Args[1]
 	args := os.Args[2:]
-	tokens := os.Args[1:]
-	if err := nursecall.Start(cmdStr, args, nursecall.NewNotifier(tokens)); err != nil {
+	if err := nursecall.Start(cmdStr, args, nursecall.NewNotifier()); err != nil {
 		log.Println(err)
 	}
 }
