@@ -29,7 +29,7 @@ type Notifier struct {
 }
 
 const (
-	defaultEndpointURL = "http://localhost:13000/jobs"
+	defaultEndpointURL = "https://api.nursecall.run/jobs"
 )
 
 func getHeartBeatInterval() int {
